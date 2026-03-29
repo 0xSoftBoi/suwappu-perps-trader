@@ -1,0 +1,1 @@
+{"name":"suwappu-perps-trader","version":"1.0.0","type":"module","scripts":{"start":"npx tsx trader.ts"},"dependencies":{"@suwappu/sdk":"^0.4.0","tsx":"^4.0.0"},"license":"MIT"}
