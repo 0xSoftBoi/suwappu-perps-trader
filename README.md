@@ -44,6 +44,34 @@ python trader.py positions --address 0x...
 | `quote` | Get entry/liquidation/margin for a position |
 | `positions` | Show open positions with PnL |
 
+## Example Output
+
+```
+$ bun run src/cli.ts markets --top 5
+
+Perpetual Futures Markets
+
+  Market       Mark Price      Max Lev   Funding Rate
+  ───────────────────────────────────────────────────────
+  BTC-USD      $66,637         40x       0.0000%
+  ETH-USD      $2,003          20x       0.0012%
+  SOL-USD      $82             20x       -0.0005%
+  ARB-USD      $0.85           20x       0.0003%
+  AVAX-USD     $24             20x       0.0001%
+```
+
+```
+$ bun run src/cli.ts quote --market ETH-USD --side long --size 1 --leverage 10
+
+1 ETH-USD LONG @ 10x
+
+  Entry Price:       $2,003
+  Margin Required:   $200.30
+  Liquidation Price: $1,823.00
+  Fee:               $1.20
+  Funding Rate:      0.0012%
+```
+
 ## Development
 
 ```bash
