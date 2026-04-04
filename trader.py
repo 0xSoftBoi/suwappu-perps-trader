@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Suwappu Perps Trader — browse markets, quote positions, check PnL."""
-import argparse, asyncio, json, os, sys
+import argparse, asyncio, json, os, re, sys
 from suwappu import create_client
 
 def require_env(name):
@@ -66,6 +66,17 @@ def main():
     ps.add_argument("--json", action="store_true")
     
     args = p.parse_args()
+
+    if hasattr(args, 'leverage'):
+        MAX_LEVERAGE = float(os.environ.get("MAX_LEVERAGE", "20"))
+        if args.leverage <= 0 or args.leverage > MAX_LEVERAGE:
+            print(f"Error: leverage must be between 1 and {MAX_LEVERAGE}x")
+            sys.exit(1)
+
+    if hasattr(args, 'address') and args.address and not re.match(r'^0x[a-fA-F0-9]{40}$', args.address):
+        print(f"Error: invalid Ethereum address format: {args.address}")
+        sys.exit(1)
+
     fn = {"markets": cmd_markets, "quote": cmd_quote, "positions": cmd_positions}[args.command]
     asyncio.run(fn(args))
 
