@@ -1,58 +1,81 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
+import {
+  positiveInteger,
+  validateAddress,
+  validatePerpsQuote,
+} from "../src/validation.js";
 
-function formatFundingRate(rate: number): string {
-  return (rate * 100).toFixed(4) + "%";
-}
-
-function formatPnl(pnl: number): string {
-  const sign = pnl >= 0 ? "+" : "";
-  return `${sign}$${pnl.toFixed(2)}`;
-}
-
-describe("funding rate formatting", () => {
-  it("should format positive rate", () => {
-    expect(formatFundingRate(0.0001)).toBe("0.0100%");
+describe("perps quote validation", () => {
+  it("accepts a valid quote within the market leverage cap", () => {
+    expect(
+      validatePerpsQuote({
+        market: "ETH-USD",
+        side: "long",
+        size: 1,
+        leverage: 5,
+        maxLeverage: 20,
+      }),
+    ).toBe("long");
   });
 
-  it("should format zero rate", () => {
-    expect(formatFundingRate(0)).toBe("0.0000%");
+  it("rejects leverage above the actual market cap", () => {
+    expect(() =>
+      validatePerpsQuote({
+        market: "ETH-USD",
+        side: "short",
+        size: 1,
+        leverage: 21,
+        maxLeverage: 20,
+      }),
+    ).toThrow("at most 20x");
   });
 
-  it("should format negative rate", () => {
-    expect(formatFundingRate(-0.0005)).toBe("-0.0500%");
+  it("rejects non-positive size and leverage", () => {
+    expect(() =>
+      validatePerpsQuote({
+        market: "ETH-USD",
+        side: "long",
+        size: 0,
+        leverage: 5,
+        maxLeverage: 20,
+      }),
+    ).toThrow("--size must be positive");
+
+    expect(() =>
+      validatePerpsQuote({
+        market: "ETH-USD",
+        side: "long",
+        size: 1,
+        leverage: 0,
+        maxLeverage: 20,
+      }),
+    ).toThrow("--leverage must be at least 1");
+  });
+
+  it("accepts only long/short sides", () => {
+    expect(() =>
+      validatePerpsQuote({
+        market: "ETH-USD",
+        side: "buy",
+        size: 1,
+        leverage: 5,
+        maxLeverage: 20,
+      }),
+    ).toThrow("--side must be long or short");
   });
 });
 
-describe("PnL formatting", () => {
-  it("should show + for positive PnL", () => {
-    expect(formatPnl(150.5)).toBe("+$150.50");
+describe("CLI input validation", () => {
+  it("requires a positive integer market limit", () => {
+    expect(positiveInteger(10, "--top")).toBe(10);
+    expect(() => positiveInteger(0, "--top")).toThrow("--top");
+    expect(() => positiveInteger(1.5, "--top")).toThrow("--top");
   });
 
-  it("should show negative PnL", () => {
-    expect(formatPnl(-42.3)).toBe("$-42.30");
-  });
-
-  it("should show +$0.00 for zero", () => {
-    expect(formatPnl(0)).toBe("+$0.00");
-  });
-});
-
-describe("subcommand validation", () => {
-  const valid = ["markets", "quote", "positions"];
-  it("should recognize markets/quote/positions", () => {
-    valid.forEach(cmd => expect(valid.includes(cmd)).toBe(true));
-  });
-  it("should reject unknown commands", () => {
-    expect(valid.includes("trade")).toBe(false);
-  });
-});
-
-describe("leverage bounds", () => {
-  it("should allow 1-40x leverage", () => {
-    expect(5 >= 1 && 5 <= 40).toBe(true);
-    expect(40 >= 1 && 40 <= 40).toBe(true);
-  });
-  it("should reject 0x leverage", () => {
-    expect(0 >= 1).toBe(false);
+  it("validates HyperLiquid/EVM addresses", () => {
+    expect(validateAddress("0x1111111111111111111111111111111111111111")).toBe(
+      "0x1111111111111111111111111111111111111111",
+    );
+    expect(() => validateAddress("0x123")).toThrow("20-byte");
   });
 });
