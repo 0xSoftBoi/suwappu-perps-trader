@@ -1,83 +1,162 @@
 #!/usr/bin/env python3
-"""Suwappu Perps Trader — browse markets, quote positions, check PnL."""
-import argparse, asyncio, json, os, re, sys
+"""Read-only Suwappu perps market, quote, and position explorer."""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import math
+import os
+import re
+import sys
+
 from suwappu import create_client
 
-def require_env(name):
-    val = os.environ.get(name)
-    if not val:
-        print(f"Error: {name} not set", file=sys.stderr)
-        sys.exit(1)
-    return val
 
-async def cmd_markets(args):
-    c = create_client(api_key=require_env("SUWAPPU_API_KEY"))
-    markets = await c.perps.markets()
-    top = markets[:args.top]
-    if args.json:
-        print(json.dumps([m.model_dump() for m in top], indent=2)); await c.close(); return
-    print("Perpetual Futures Markets\n")
-    print("  Market       Mark Price      Max Lev   Funding Rate")
-    print("  " + "─" * 55)
-    for m in top:
-        print(f"  {m.name:<13}${m.mark_price:>14,.0f}  {m.max_leverage:>6}x     {m.funding_rate*100:.4f}%")
-    await c.close()
+def require_api_key() -> str:
+    value = os.environ.get("SUWAPPU_API_KEY")
+    if not value:
+        raise RuntimeError("SUWAPPU_API_KEY is not set")
+    return value
 
-async def cmd_quote(args):
-    c = create_client(api_key=require_env("SUWAPPU_API_KEY"))
-    q = await c.perps.quote(args.market, args.side, args.size, args.leverage)
-    if args.json:
-        print(json.dumps(q.model_dump(), indent=2)); await c.close(); return
-    print(f"\n{args.size} {args.market} {args.side.upper()} @ {args.leverage}x\n")
-    print(f"  Entry:       ${q.entry_price:,.2f}")
-    print(f"  Margin:      ${q.margin:.2f}")
-    print(f"  Liquidation: ${q.liquidation_price:.2f}")
-    print(f"  Fee:         ${q.fee:.2f}")
-    await c.close()
 
-async def cmd_positions(args):
-    c = create_client(api_key=require_env("SUWAPPU_API_KEY"))
-    pos = await c.perps.positions(args.address)
-    if args.json:
-        print(json.dumps([p.model_dump() for p in pos], indent=2)); await c.close(); return
-    if not pos: print("No open positions."); await c.close(); return
-    for p in pos:
-        sign = "+" if p.unrealized_pnl >= 0 else ""
-        print(f"  {p.market} {p.side.upper()} {p.size} @ ${p.entry_price} | PnL: {sign}${p.unrealized_pnl:.2f}")
-    await c.close()
+async def cmd_markets(args: argparse.Namespace) -> None:
+    if args.top <= 0:
+        raise ValueError("--top must be a positive integer")
 
-def main():
-    p = argparse.ArgumentParser(description="Suwappu Perps Trader")
-    sub = p.add_subparsers(dest="command", required=True)
-    
-    m = sub.add_parser("markets", help="List perpetual markets")
-    m.add_argument("--top", type=int, default=10)
-    m.add_argument("--json", action="store_true")
-    
-    q = sub.add_parser("quote", help="Quote a leveraged position")
-    q.add_argument("--market", default="ETH-USD")
-    q.add_argument("--side", choices=["long","short"], default="long")
-    q.add_argument("--size", type=float, default=1.0)
-    q.add_argument("--leverage", type=float, default=5.0)
-    q.add_argument("--json", action="store_true")
-    
-    ps = sub.add_parser("positions", help="Check open positions")
-    ps.add_argument("--address", required=True)
-    ps.add_argument("--json", action="store_true")
-    
-    args = p.parse_args()
+    client = create_client(api_key=require_api_key())
+    try:
+        markets = (await client.perps.markets())[: args.top]
+        if args.json:
+            print(json.dumps([market.model_dump() for market in markets], indent=2))
+            return
 
-    if hasattr(args, 'leverage'):
-        MAX_LEVERAGE = float(os.environ.get("MAX_LEVERAGE", "20"))
-        if args.leverage <= 0 or args.leverage > MAX_LEVERAGE:
-            print(f"Error: leverage must be between 1 and {MAX_LEVERAGE}x")
-            sys.exit(1)
+        print("Perpetual Futures Markets\n")
+        print("  Market       Mark Price      Max Lev   Funding Rate")
+        print("  " + "─" * 55)
+        for market in markets:
+            print(
+                f"  {market.name:<13}${market.mark_price:>14,.0f}  "
+                f"{market.max_leverage:>6}x     {market.funding_rate * 100:.4f}%"
+            )
+    finally:
+        await client.close()
 
-    if hasattr(args, 'address') and args.address and not re.match(r'^0x[a-fA-F0-9]{40}$', args.address):
-        print(f"Error: invalid Ethereum address format: {args.address}")
-        sys.exit(1)
 
-    fn = {"markets": cmd_markets, "quote": cmd_quote, "positions": cmd_positions}[args.command]
-    asyncio.run(fn(args))
+async def cmd_quote(args: argparse.Namespace) -> None:
+    if not math.isfinite(args.size) or args.size <= 0:
+        raise ValueError("--size must be positive")
+    if not math.isfinite(args.leverage) or args.leverage < 1:
+        raise ValueError("--leverage must be at least 1")
 
-if __name__ == "__main__": main()
+    client = create_client(api_key=require_api_key())
+    try:
+        markets = await client.perps.markets()
+        market = next(
+            (
+                candidate
+                for candidate in markets
+                if candidate.name.lower() == args.market.lower()
+            ),
+            None,
+        )
+        if market is None:
+            raise ValueError(
+                f'Unknown perps market "{args.market}". Run "markets" first.'
+            )
+        if args.leverage > market.max_leverage:
+            raise ValueError(
+                f"{market.name} supports at most {market.max_leverage}x leverage; "
+                f"requested {args.leverage}x"
+            )
+
+        quote = await client.perps.quote(
+            market.name,
+            args.side,
+            args.size,
+            args.leverage,
+        )
+        if args.json:
+            print(json.dumps(quote.model_dump(), indent=2))
+            return
+
+        print(
+            f"\n{args.size} {market.name} {args.side.upper()} "
+            f"@ {args.leverage}x\n"
+        )
+        print("  Read-only quote — no position is opened.")
+        print(f"  Entry:       ${quote.entry_price:,.2f}")
+        print(f"  Margin:      ${quote.margin:.2f}")
+        print(f"  Liquidation: ${quote.liquidation_price:.2f}")
+        print(f"  Fee:         ${quote.fee:.2f}")
+        print(f"  Funding:     {quote.funding_rate * 100:.4f}%")
+    finally:
+        await client.close()
+
+
+async def cmd_positions(args: argparse.Namespace) -> None:
+    address = args.address or os.environ.get("HL_ADDRESS")
+    if not address:
+        raise ValueError("--address is required unless HL_ADDRESS is set")
+    if not re.fullmatch(r"0x[a-fA-F0-9]{40}", address):
+        raise ValueError("HyperLiquid address must be a 0x-prefixed 20-byte address")
+
+    client = create_client(api_key=require_api_key())
+    try:
+        positions = await client.perps.positions(address)
+        if args.json:
+            print(json.dumps([position.model_dump() for position in positions], indent=2))
+            return
+        if not positions:
+            print("No open positions.")
+            return
+
+        print("\nOpen Positions\n")
+        for position in positions:
+            sign = "+" if position.unrealized_pnl >= 0 else ""
+            print(
+                f"  {position.market} {position.side.upper()} {position.size} "
+                f"@ ${position.entry_price} | {position.leverage}x | "
+                f"PnL: {sign}${position.unrealized_pnl:.2f}"
+            )
+    finally:
+        await client.close()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Read-only Suwappu perps explorer"
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    markets = sub.add_parser("markets", help="List perpetual markets")
+    markets.add_argument("--top", type=int, default=10)
+    markets.add_argument("--json", action="store_true")
+
+    quote = sub.add_parser("quote", help="Get a read-only leveraged-position quote")
+    quote.add_argument("--market", default="ETH-USD")
+    quote.add_argument("--side", choices=["long", "short"], default="long")
+    quote.add_argument("--size", type=float, default=1.0)
+    quote.add_argument("--leverage", type=float, default=5.0)
+    quote.add_argument("--json", action="store_true")
+
+    positions = sub.add_parser("positions", help="Read open positions")
+    positions.add_argument("--address", help="defaults to HL_ADDRESS")
+    positions.add_argument("--json", action="store_true")
+
+    args = parser.parse_args()
+    fn = {
+        "markets": cmd_markets,
+        "quote": cmd_quote,
+        "positions": cmd_positions,
+    }[args.command]
+
+    try:
+        asyncio.run(fn(args))
+    except Exception as error:
+        print(f"Error: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
+
+
+if __name__ == "__main__":
+    main()
