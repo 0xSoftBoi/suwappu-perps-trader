@@ -1,71 +1,144 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
 import { createClient } from "@suwappu/sdk";
+import {
+  positiveInteger,
+  validateAddress,
+  validatePerpsQuote,
+} from "./validation.js";
 
-function requireEnv(name: string): string {
-  const val = process.env[name];
-  if (!val) { console.error(`Error: ${name} not set`); if (name === "SUWAPPU_API_KEY") console.error('  Get one: curl -X POST https://api.suwappu.bot/v1/agent/register -H "Content-Type: application/json" -d \'{"name":"my-agent"}\''); process.exit(1); }
-  return val;
+function requireApiKey(): string {
+  const value = process.env.SUWAPPU_API_KEY;
+  if (!value) {
+    throw new Error(
+      "SUWAPPU_API_KEY is not set. Register an agent at https://api.suwappu.bot/v1/agent/register",
+    );
+  }
+  return value;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 const program = new Command()
   .name("suwappu-perps-trader")
-  .description("Browse perpetual futures markets, quote leveraged positions, and track PnL")
+  .description("Read-only Suwappu perps market, quote, and position explorer")
   .version("1.0.0");
 
-program.command("markets").description("List available perpetual markets")
-  .option("--top <n>", "show top N markets", parseInt, 10)
+program
+  .command("markets")
+  .description("List available perpetual markets")
+  .option("--top <n>", "show top N markets", Number.parseInt, 10)
   .option("--json", "JSON output")
   .action(async (opts) => {
-    const client = createClient({ apiKey: requireEnv("SUWAPPU_API_KEY") });
-    try {
-      const markets = await client.perps.markets();
-      const top = markets.slice(0, opts.top);
-      if (opts.json) { console.log(JSON.stringify(top, null, 2)); return; }
-      console.log("Perpetual Futures Markets\n");
-      console.log("  Market       Mark Price      Max Lev   Funding Rate");
-      console.log("  " + "─".repeat(55));
-      for (const m of top) {
-        console.log(`  ${m.name.padEnd(13)}$${m.markPrice.toLocaleString().padEnd(16)}${m.maxLeverage}x`.padEnd(42) + `${(m.fundingRate * 100).toFixed(4)}%`);
-      }
-    } catch (e: any) { console.error(`Error: ${e.message}`); process.exit(1); }
+    const topN = positiveInteger(opts.top, "--top");
+    const client = createClient({ apiKey: requireApiKey() });
+    const markets = (await client.perps.markets()).slice(0, topN);
+
+    if (opts.json) {
+      console.log(JSON.stringify(markets, null, 2));
+      return;
+    }
+
+    console.log("Perpetual Futures Markets\n");
+    console.log("  Market       Mark Price      Max Lev   Funding Rate");
+    console.log("  " + "─".repeat(55));
+    for (const market of markets) {
+      console.log(
+        `  ${market.name.padEnd(13)}$${market.markPrice.toLocaleString().padEnd(16)}${market.maxLeverage}x`.padEnd(
+          42,
+        ) + `${(market.fundingRate * 100).toFixed(4)}%`,
+      );
+    }
   });
 
-program.command("quote").description("Get a leveraged position quote")
+program
+  .command("quote")
+  .description("Get a read-only leveraged-position quote; never opens a position")
   .option("--market <name>", "market symbol", "ETH-USD")
   .option("--side <side>", "long or short", "long")
-  .option("--size <n>", "position size", parseFloat, 1)
-  .option("--leverage <n>", "leverage multiplier", parseFloat, 5)
+  .option("--size <n>", "position size", Number.parseFloat, 1)
+  .option("--leverage <n>", "leverage multiplier", Number.parseFloat, 5)
   .option("--json", "JSON output")
   .action(async (opts) => {
-    const client = createClient({ apiKey: requireEnv("SUWAPPU_API_KEY") });
-    try {
-      const q = await client.perps.quote(opts.market, opts.side, opts.size, opts.leverage);
-      if (opts.json) { console.log(JSON.stringify(q, null, 2)); return; }
-      console.log(`\n${opts.size} ${opts.market} ${opts.side.toUpperCase()} @ ${opts.leverage}x\n`);
-      console.log(`  Entry Price:       $${q.entryPrice.toLocaleString()}`);
-      console.log(`  Margin Required:   $${q.margin.toFixed(2)}`);
-      console.log(`  Liquidation Price: $${q.liquidationPrice.toFixed(2)}`);
-      console.log(`  Fee:               $${q.fee.toFixed(2)}`);
-      console.log(`  Funding Rate:      ${(q.fundingRate * 100).toFixed(4)}%`);
-    } catch (e: any) { console.error(`Error: ${e.message}`); process.exit(1); }
+    const client = createClient({ apiKey: requireApiKey() });
+    const markets = await client.perps.markets();
+    const market = markets.find(
+      (candidate) => candidate.name.toLowerCase() === opts.market.toLowerCase(),
+    );
+    if (!market) {
+      throw new Error(
+        `Unknown perps market "${opts.market}". Run "markets" to list available markets.`,
+      );
+    }
+
+    const side = validatePerpsQuote({
+      market: market.name,
+      side: opts.side,
+      size: opts.size,
+      leverage: opts.leverage,
+      maxLeverage: market.maxLeverage,
+    });
+    const quote = await client.perps.quote(
+      market.name,
+      side,
+      opts.size,
+      opts.leverage,
+    );
+
+    if (opts.json) {
+      console.log(JSON.stringify(quote, null, 2));
+      return;
+    }
+
+    console.log(
+      `\n${opts.size} ${market.name} ${side.toUpperCase()} @ ${opts.leverage}x\n`,
+    );
+    console.log("  Read-only quote — no position is opened.");
+    console.log(`  Entry Price:       $${quote.entryPrice.toLocaleString()}`);
+    console.log(`  Margin Required:   $${quote.margin.toFixed(2)}`);
+    console.log(`  Liquidation Price: $${quote.liquidationPrice.toFixed(2)}`);
+    console.log(`  Fee:               $${quote.fee.toFixed(2)}`);
+    console.log(`  Funding Rate:      ${(quote.fundingRate * 100).toFixed(4)}%`);
   });
 
-program.command("positions").description("Check open positions")
-  .requiredOption("--address <addr>", "HyperLiquid address")
+program
+  .command("positions")
+  .description("Read open positions for an address")
+  .option("--address <addr>", "HyperLiquid address; defaults to HL_ADDRESS")
   .option("--json", "JSON output")
   .action(async (opts) => {
-    const client = createClient({ apiKey: requireEnv("SUWAPPU_API_KEY") });
-    try {
-      const positions = await client.perps.positions(opts.address);
-      if (opts.json) { console.log(JSON.stringify(positions, null, 2)); return; }
-      if (!positions.length) { console.log("No open positions."); return; }
-      console.log("\nOpen Positions\n");
-      for (const p of positions) {
-        const pnl = p.unrealizedPnl >= 0 ? `+$${p.unrealizedPnl.toFixed(2)}` : `-$${Math.abs(p.unrealizedPnl).toFixed(2)}`;
-        console.log(`  ${p.market} ${p.side.toUpperCase()} ${p.size} @ $${p.entryPrice} → $${p.markPrice} | ${p.leverage}x | PnL: ${pnl}`);
-      }
-    } catch (e: any) { console.error(`Error: ${e.message}`); process.exit(1); }
+    const rawAddress = opts.address ?? process.env.HL_ADDRESS;
+    if (!rawAddress) {
+      throw new Error("--address is required unless HL_ADDRESS is set");
+    }
+    const address = validateAddress(rawAddress);
+    const client = createClient({ apiKey: requireApiKey() });
+    const positions = await client.perps.positions(address);
+
+    if (opts.json) {
+      console.log(JSON.stringify(positions, null, 2));
+      return;
+    }
+    if (!positions.length) {
+      console.log("No open positions.");
+      return;
+    }
+
+    console.log("\nOpen Positions\n");
+    for (const position of positions) {
+      const pnl =
+        position.unrealizedPnl >= 0
+          ? `+$${position.unrealizedPnl.toFixed(2)}`
+          : `-$${Math.abs(position.unrealizedPnl).toFixed(2)}`;
+      console.log(
+        `  ${position.market} ${position.side.toUpperCase()} ${position.size} @ $${position.entryPrice} → $${position.markPrice} | ${position.leverage}x | PnL: ${pnl}`,
+      );
+    }
   });
 
-program.parseAsync();
+program.parseAsync().catch((error: unknown) => {
+  console.error(`Error: ${errorMessage(error)}`);
+  process.exitCode = 1;
+});
