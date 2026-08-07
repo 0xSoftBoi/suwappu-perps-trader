@@ -1,11 +1,18 @@
 import { describe, expect, it } from "bun:test";
 import {
+  effectiveQuoteMaxLeverage,
   positiveInteger,
   validateAddress,
   validatePerpsQuote,
 } from "../src/validation.js";
 
 describe("perps quote validation", () => {
+  it("honors both the returned market maximum and Suwappu's current quote cap", () => {
+    expect(effectiveQuoteMaxLeverage(10)).toBe(10);
+    expect(effectiveQuoteMaxLeverage(40)).toBe(20);
+    expect(() => effectiveQuoteMaxLeverage(0)).toThrow("valid leverage limit");
+  });
+
   it("accepts a valid quote within the market leverage cap", () => {
     expect(
       validatePerpsQuote({

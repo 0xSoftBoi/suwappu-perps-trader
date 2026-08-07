@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only Suwappu perps market, quote, and position explorer."""
+"""Read-only Suwappu perps market, quote, position, and risk explorer."""
 from __future__ import annotations
 
 import argparse
@@ -10,7 +10,11 @@ import os
 import re
 import sys
 
+from risk import PositionInput, build_risk_snapshot, validate_warning_threshold
 from suwappu import create_client
+
+
+SUWAPPU_QUOTE_MAX_LEVERAGE = 20.0
 
 
 def require_api_key() -> str:
@@ -18,6 +22,21 @@ def require_api_key() -> str:
     if not value:
         raise RuntimeError("SUWAPPU_API_KEY is not set")
     return value
+
+
+def resolve_address(value: str | None) -> str:
+    address = value or os.environ.get("HL_ADDRESS")
+    if not address:
+        raise ValueError("--address is required unless HL_ADDRESS is set")
+    if not re.fullmatch(r"0x[a-fA-F0-9]{40}", address):
+        raise ValueError("HyperLiquid address must be a 0x-prefixed 20-byte address")
+    return address
+
+
+def effective_quote_max_leverage(market_max_leverage: float) -> float:
+    if not math.isfinite(market_max_leverage) or market_max_leverage <= 0:
+        raise ValueError("No valid leverage limit returned for market")
+    return min(market_max_leverage, SUWAPPU_QUOTE_MAX_LEVERAGE)
 
 
 async def cmd_markets(args: argparse.Namespace) -> None:
@@ -64,9 +83,11 @@ async def cmd_quote(args: argparse.Namespace) -> None:
             raise ValueError(
                 f'Unknown perps market "{args.market}". Run "markets" first.'
             )
-        if args.leverage > market.max_leverage:
+        quote_max_leverage = effective_quote_max_leverage(market.max_leverage)
+        if args.leverage > quote_max_leverage:
             raise ValueError(
-                f"{market.name} supports at most {market.max_leverage}x leverage; "
+                f"{market.name} supports at most {quote_max_leverage:g}x leverage on the "
+                "current Suwappu quote route; "
                 f"requested {args.leverage}x"
             )
 
@@ -95,12 +116,7 @@ async def cmd_quote(args: argparse.Namespace) -> None:
 
 
 async def cmd_positions(args: argparse.Namespace) -> None:
-    address = args.address or os.environ.get("HL_ADDRESS")
-    if not address:
-        raise ValueError("--address is required unless HL_ADDRESS is set")
-    if not re.fullmatch(r"0x[a-fA-F0-9]{40}", address):
-        raise ValueError("HyperLiquid address must be a 0x-prefixed 20-byte address")
-
+    address = resolve_address(args.address)
     client = create_client(api_key=require_api_key())
     try:
         positions = await client.perps.positions(address)
@@ -119,6 +135,63 @@ async def cmd_positions(args: argparse.Namespace) -> None:
                 f"@ ${position.entry_price} | {position.leverage}x | "
                 f"PnL: {sign}${position.unrealized_pnl:.2f}"
             )
+    finally:
+        await client.close()
+
+
+async def cmd_risk(args: argparse.Namespace) -> None:
+    address = resolve_address(args.address)
+    warn_within_pct = validate_warning_threshold(args.warn_within)
+    client = create_client(api_key=require_api_key())
+    try:
+        positions, markets = await asyncio.gather(
+            client.perps.positions(address),
+            client.perps.markets(),
+        )
+        snapshot = build_risk_snapshot(
+            address=address,
+            positions=[
+                PositionInput(
+                    id=position.id,
+                    market=position.market,
+                    side=position.side,
+                    size=position.size,
+                    leverage=position.leverage,
+                    entry_price=position.entry_price,
+                    mark_price=position.mark_price,
+                    margin=position.margin,
+                    unrealized_pnl=position.unrealized_pnl,
+                    liquidation_price=position.liquidation_price,
+                )
+                for position in positions
+            ],
+            market_max_by_name={
+                market.name: market.max_leverage for market in markets
+            },
+            warn_within_pct=warn_within_pct,
+        )
+
+        if args.json:
+            print(json.dumps(snapshot, indent=2))
+            return
+
+        totals = snapshot["totals"]
+        print("\nPerps Risk Snapshot\n")
+        print(f"  Address:        {snapshot['address']}")
+        print(f"  Positions:      {snapshot['positionCount']}")
+        print(f"  Notional:       ${totals['notionalUsd']:.2f}")
+        print(f"  Margin:         ${totals['marginUsd']:.2f}")
+        print(f"  Unrealized PnL: ${totals['unrealizedPnlUsd']:.2f}")
+        print(f"  Warnings:       {snapshot['warningCount']}")
+        for position in snapshot["positions"]:
+            distance = position["liquidationDistancePct"]
+            buffer = "n/a" if distance is None else f"{distance:.2f}%"
+            print(
+                f"\n  {position['market']} {position['side'].upper()} | "
+                f"liquidation buffer {buffer} | {position['leverage']}x"
+            )
+            for warning in position["warnings"]:
+                print(f"    ! {warning}")
     finally:
         await client.close()
 
@@ -144,11 +217,22 @@ def main() -> None:
     positions.add_argument("--address", help="defaults to HL_ADDRESS")
     positions.add_argument("--json", action="store_true")
 
+    risk = sub.add_parser("risk", help="Build a read-only position-risk snapshot")
+    risk.add_argument("--address", help="defaults to HL_ADDRESS")
+    risk.add_argument(
+        "--warn-within",
+        type=float,
+        default=10.0,
+        help="warn at or below this reported liquidation-buffer percentage",
+    )
+    risk.add_argument("--json", action="store_true")
+
     args = parser.parse_args()
     fn = {
         "markets": cmd_markets,
         "quote": cmd_quote,
         "positions": cmd_positions,
+        "risk": cmd_risk,
     }[args.command]
 
     try:

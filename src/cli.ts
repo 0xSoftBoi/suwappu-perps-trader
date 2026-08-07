@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
 import { createClient } from "@suwappu/sdk";
+import { buildRiskSnapshot, validateWarningThreshold } from "./risk.js";
 import {
+  effectiveQuoteMaxLeverage,
   positiveInteger,
   validateAddress,
   validatePerpsQuote,
@@ -21,9 +23,17 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function resolveAddress(value: string | undefined): string {
+  const rawAddress = value ?? process.env.HL_ADDRESS;
+  if (!rawAddress) {
+    throw new Error("--address is required unless HL_ADDRESS is set");
+  }
+  return validateAddress(rawAddress);
+}
+
 const program = new Command()
   .name("suwappu-perps-trader")
-  .description("Read-only Suwappu perps market, quote, and position explorer")
+  .description("Read-only Suwappu perps market, quote, position, and risk explorer")
   .version("1.0.0");
 
 program
@@ -78,7 +88,7 @@ program
       side: opts.side,
       size: opts.size,
       leverage: opts.leverage,
-      maxLeverage: market.maxLeverage,
+      maxLeverage: effectiveQuoteMaxLeverage(market.maxLeverage),
     });
     const quote = await client.perps.quote(
       market.name,
@@ -109,11 +119,7 @@ program
   .option("--address <addr>", "HyperLiquid address; defaults to HL_ADDRESS")
   .option("--json", "JSON output")
   .action(async (opts) => {
-    const rawAddress = opts.address ?? process.env.HL_ADDRESS;
-    if (!rawAddress) {
-      throw new Error("--address is required unless HL_ADDRESS is set");
-    }
-    const address = validateAddress(rawAddress);
+    const address = resolveAddress(opts.address);
     const client = createClient({ apiKey: requireApiKey() });
     const positions = await client.perps.positions(address);
 
@@ -135,6 +141,54 @@ program
       console.log(
         `  ${position.market} ${position.side.toUpperCase()} ${position.size} @ $${position.entryPrice} → $${position.markPrice} | ${position.leverage}x | PnL: ${pnl}`,
       );
+    }
+  });
+
+program
+  .command("risk")
+  .description("Build a read-only position-risk snapshot for alerts and dashboards")
+  .option("--address <addr>", "HyperLiquid address; defaults to HL_ADDRESS")
+  .option(
+    "--warn-within <pct>",
+    "warn when the reported liquidation buffer is at or below this percentage",
+    Number.parseFloat,
+    10,
+  )
+  .option("--json", "JSON output")
+  .action(async (opts) => {
+    const address = resolveAddress(opts.address);
+    const warnWithinPct = validateWarningThreshold(opts.warnWithin);
+    const client = createClient({ apiKey: requireApiKey() });
+    const [positions, markets] = await Promise.all([
+      client.perps.positions(address),
+      client.perps.markets(),
+    ]);
+    const snapshot = buildRiskSnapshot({ address, positions, markets, warnWithinPct });
+
+    if (opts.json) {
+      console.log(JSON.stringify(snapshot, null, 2));
+      return;
+    }
+
+    console.log("\nPerps Risk Snapshot\n");
+    console.log(`  Address:       ${snapshot.address}`);
+    console.log(`  Positions:     ${snapshot.positionCount}`);
+    console.log(`  Notional:      $${snapshot.totals.notionalUsd.toFixed(2)}`);
+    console.log(`  Margin:        $${snapshot.totals.marginUsd.toFixed(2)}`);
+    console.log(`  Unrealized PnL: $${snapshot.totals.unrealizedPnlUsd.toFixed(2)}`);
+    console.log(`  Warnings:      ${snapshot.warningCount}`);
+
+    for (const position of snapshot.positions) {
+      const buffer =
+        position.liquidationDistancePct === null
+          ? "n/a"
+          : `${position.liquidationDistancePct.toFixed(2)}%`;
+      console.log(
+        `\n  ${position.market} ${position.side.toUpperCase()} | liquidation buffer ${buffer} | ${position.leverage}x`,
+      );
+      for (const warning of position.warnings) {
+        console.log(`    ! ${warning}`);
+      }
     }
   });
 
