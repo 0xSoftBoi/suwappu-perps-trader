@@ -5,6 +5,15 @@ export function positiveInteger(value: number, flag: string): number {
   return value;
 }
 
+export const SUWAPPU_QUOTE_MAX_LEVERAGE = 20;
+
+export function effectiveQuoteMaxLeverage(marketMaxLeverage: number): number {
+  if (!Number.isFinite(marketMaxLeverage) || marketMaxLeverage <= 0) {
+    throw new Error("No valid leverage limit returned for market");
+  }
+  return Math.min(marketMaxLeverage, SUWAPPU_QUOTE_MAX_LEVERAGE);
+}
+
 export function validatePerpsQuote(options: {
   market: string;
   side: string;
