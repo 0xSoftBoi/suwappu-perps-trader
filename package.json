@@ -1,7 +1,7 @@
 {
   "name": "suwappu-perps-trader",
   "version": "1.0.0",
-  "description": "Read-only Suwappu perps market, quote, and position explorer",
+  "description": "Read-only Suwappu perps market, quote, position, and risk explorer",
   "type": "module",
   "bin": {
     "suwappu-perps": "src/cli.ts"
@@ -12,7 +12,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@suwappu/sdk": "^0.4.0",
+    "@suwappu/sdk": "0.4.0",
     "commander": "^12.0.0"
   },
   "devDependencies": {
