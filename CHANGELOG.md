@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Add a blocking Python dependency vulnerability audit alongside the existing Bun audit and dual-language SARIF-gated CodeQL checks.
+- Document a complete local release gate for the source-pinned Python SDK companion.
+
 ## 2.0.0 — 2026-08-07
 
 - Turn the perps explorer into a standalone read-only risk monitor.
