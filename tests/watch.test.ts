@@ -46,7 +46,9 @@ describe("durable perps watch", () => {
     const active = evaluatePosition(position(8), rule, undefined).nextEntry!;
     const unknown = evaluatePosition(position(null), rule, active);
     expect(unknown.decision.state).toBe("insufficient_data");
-    expect(unknown.nextEntry).toBeNull();
+    expect(unknown.nextEntry?.active).toBe(true);
+    expect(unknown.nextEntry?.lastTransitionAt).toBe(active.lastTransitionAt);
+    expect(unknown.nextEntry?.missing).toBe(false);
   });
 
   it("does not treat a missing previously alerted position as recovered", () => {

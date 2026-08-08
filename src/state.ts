@@ -183,16 +183,15 @@ export function acquireStateLock(): StateLock {
   try {
     writeFileSync(fd, `${token}\n`, "utf8");
     fsyncSync(fd);
-    closeSync(fd);
   } catch (error) {
+    // Check the pathname while the O_EXCL-created inode is still held open, so
+    // an unlinked inode cannot be recycled for a replacement file.
+    unlinkMatchingLock(path, identity);
     try {
       closeSync(fd);
     } catch {
-      // The descriptor may already have been closed by a failed close operation.
+      // Best-effort descriptor cleanup after a failed acquisition.
     }
-    // The O_EXCL-created inode is ours even if its token write was partial.
-    // Delete only if the path still resolves to that exact inode.
-    unlinkMatchingLock(path, identity);
     throw error;
   }
 
@@ -202,6 +201,11 @@ export function acquireStateLock(): StateLock {
       if (released) return;
       released = true;
       unlinkMatchingLock(path, identity, token);
+      try {
+        closeSync(fd);
+      } catch {
+        // Release is fail-closed; never delete another lock to compensate.
+      }
     },
   };
 }
