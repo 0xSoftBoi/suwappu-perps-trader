@@ -45,7 +45,7 @@ jobs:
           jq -s -e '[.[].runs[]?.results[]?] | length == 0' "${sarif_files[@]}"
       - name: Retain CodeQL SARIF
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: codeql-${{ matrix.language }}-sarif
           path: codeql-results
