@@ -19,10 +19,16 @@ bun run typecheck
 bun test
 bun run build
 ./dist/suwappu-perps --help
+bun audit --audit-level=high
 
+python -m pip install -r requirements.txt
+python -m pip install pip-audit
 python -m py_compile trader.py risk.py
 python -m unittest discover -s tests -p 'test_*.py'
+pip-audit -r requirements.txt
 ```
+
+CI must keep both dependency audits and the private-repo SARIF-gated TypeScript/Python CodeQL checks green.
 
 If you change the container or runtime defaults, also verify `docker run --network none ... --help` and a non-root UID. If you change the JSON schema, state machine, thresholds, or authority model, update `README.md`, `BUILDING_A_PRODUCT.md`, `docs/OPERATIONS.md`, tests, and `CHANGELOG.md` in the same pull request.
 
