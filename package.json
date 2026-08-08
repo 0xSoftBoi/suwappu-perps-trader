@@ -1,7 +1,7 @@
 {
   "name": "suwappu-perps-trader",
-  "version": "1.0.0",
-  "description": "Read-only Suwappu perps market, quote, position, and risk explorer",
+  "version": "2.0.0",
+  "description": "Standalone read-only perpetual-futures risk monitor built on Suwappu",
   "type": "module",
   "bin": {
     "suwappu-perps": "src/cli.ts"
@@ -9,16 +9,18 @@
   "scripts": {
     "start": "bun run src/cli.ts markets",
     "check": "tsc --noEmit",
-    "test": "bun test"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "build": "mkdir -p dist && bun build src/cli.ts --compile --outfile dist/suwappu-perps"
   },
   "dependencies": {
-    "@suwappu/sdk": "0.4.0",
-    "commander": "^12.0.0"
+    "commander": "15.0.0"
   },
   "devDependencies": {
-    "@types/bun": "^1.3.14",
-    "typescript": "^5.0.0"
+    "@types/bun": "1.3.14",
+    "typescript": "5.9.3"
   },
+  "engines": { "bun": ">=1.3.14" },
   "packageManager": "bun@1.3.14",
   "license": "MIT"
 }

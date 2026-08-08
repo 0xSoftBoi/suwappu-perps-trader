@@ -22,12 +22,16 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
-      - name: Install dependencies
-        run: bun install
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
       - name: Typecheck
-        run: bun run check
+        run: bun run typecheck
       - name: Test
         run: bun test
+      - name: Build standalone executable
+        run: bun run build
+      - name: Smoke-test standalone CLI
+        run: ./dist/suwappu-perps --help
 
   python-quality:
     runs-on: ubuntu-latest
@@ -37,7 +41,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - name: Install Python SDK
+      - name: Install pinned Python SDK
         run: python -m pip install -r requirements.txt
       - name: Compile Python entrypoints
         run: python -m py_compile trader.py risk.py
@@ -45,3 +49,28 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_*.py'
       - name: Import SDK
         run: python -c "from suwappu import create_client; assert callable(create_client)"
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: Audit high-severity dependencies
+        run: bun audit --audit-level=high
+
+  container-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build non-root image
+        run: docker build -t suwappu-perps-trader:ci .
+      - name: Verify non-root runtime
+        run: test "$(docker run --rm --entrypoint id suwappu-perps-trader:ci -u)" != "0"
+      - name: Smoke-test zero-network default
+        run: docker run --rm --network none suwappu-perps-trader:ci --help

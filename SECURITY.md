@@ -1,42 +1,39 @@
 # Security Policy
 
-This repository is a satellite / example application built on the
-[Suwappu API](https://github.com/0xSoftBoi/suwappubot). Some examples can
-initiate real financial transactions when execution is enabled. Treat API keys,
-wallet credentials, and configuration as sensitive.
+## Scope and authority
 
-## Reporting a vulnerability
+This repository is a read-only/quote-only Suwappu perps risk monitor. Its commands can read market data and positions, request an indicative quote, derive risk metrics, and persist local alert state.
 
-**Do not open a public issue for security reports.** Instead:
+It does **not** contain a Hyperliquid signing key path, order-placement command, open/close endpoint, transaction signer, or broadcast path. Adding any of those would be a separate security/authority review, not a routine feature.
 
-- Use **GitHub Private Vulnerability Reporting** when it is enabled for this repository, or
-- Email **security@suwappu.bot**.
+Treat these as sensitive even though the monitor does not execute trades:
 
-Please include the affected file, version or commit, reproduction steps, and an
-impact assessment.
+- `SUWAPPU_API_KEY`;
+- customer watchlists and alert thresholds;
+- alert history and delivery endpoints;
+- webhook credentials in a downstream product.
 
-**Scope note:** issues in this repository's own code, SDK usage, dependencies,
-or CI belong here. Vulnerabilities in the Suwappu API, core bot, smart
-contracts, custody/key-management layer, or shared SDK should be reported
-upstream through the
-[core security policy](https://github.com/0xSoftBoi/suwappubot/security/policy).
+The local watch state contains wallet/market/rule metadata but no API key. State directories are created mode `0700` and files/locks mode `0600` on supported Unix filesystems.
 
-## Custody and execution model
+## Report a vulnerability
 
-Suwappu supports both self-custody and custodial product flows. This satellite
-repository does not make a custody guarantee: behavior depends on the API mode
-and configuration in use. Prefer dry-run or read-only modes where available,
-use test wallets before enabling execution, and never commit credentials.
+Do not open a public issue for a security report.
 
-## Our commitment
+- Use GitHub Private Vulnerability Reporting if it is enabled for this repository, or
+- email `security@suwappu.bot`.
 
-- **Acknowledge** reports within 3 business days.
-- **Triage and severity** within 7 business days.
-- **Coordinate disclosure** with the reporter and provide credit unless
-  anonymity is requested.
+Include the affected version/commit, reproduction steps, impact, and any suggested mitigation.
 
-## Safe harbor
+Issues in this repository's CLI, state handling, container, dependencies, or CI belong here. Issues in the Suwappu API, shared SDKs, custody infrastructure, or other core services should be reported through the [Suwappu core security policy](https://github.com/0xSoftBoi/suwappubot/security/policy).
 
-Good-faith research conducted under this policy, without privacy violations,
-data destruction, or service degradation, will not result in legal action from
-us. If in doubt, contact us before testing.
+We intentionally do not publish response-time promises or legal safe-harbor terms here that have not been established as an operating commitment. Coordinate testing with the security contact when it may affect real users or service availability.
+
+## Operator guidance
+
+- Never commit `.env`, API keys, wallet private keys, or webhook secrets.
+- Use a secret manager in hosted deployments and rotate exposed credentials.
+- Mount persistent state only where the runtime user needs access.
+- Do not run two writers against the same local state directory; the lock is single-node coordination, not a distributed lock.
+- Keep `SUWAPPU_API_EVENTS` metadata-only if you forward it to central logging.
+- Reconcile `not_returned` decisions rather than automatically interpreting them as a closed/recovered position.
+- Review dependency and CodeQL findings before release.
