@@ -63,6 +63,16 @@ jobs:
       - name: Audit high-severity dependencies
         run: bun audit --audit-level=high
 
+  python-dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Audit Python dependency advisories
+        uses: pypa/gh-action-pip-audit@v1.1.0
+        with:
+          inputs: requirements.txt
+
   container-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 10

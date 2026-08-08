@@ -181,12 +181,16 @@ bun install --frozen-lockfile
 bun run typecheck
 bun test
 bun run build
+bun audit --audit-level=high
 
+python -m pip install -r requirements.txt
+python -m pip install pip-audit
 python -m py_compile trader.py risk.py
 python -m unittest discover -s tests -p 'test_*.py'
+pip-audit -r requirements.txt
 ```
 
-CI additionally runs a high-severity Bun audit, builds/smoke-tests the standalone executable, imports the pinned Python SDK, builds a non-root container, verifies zero-network startup, and runs TypeScript/Python CodeQL.
+CI additionally runs blocking Bun and Python dependency audits, builds/smoke-tests the standalone executable, imports the pinned Python SDK, builds a non-root container, verifies zero-network startup, and runs TypeScript/Python CodeQL.
 
 ## Security
 

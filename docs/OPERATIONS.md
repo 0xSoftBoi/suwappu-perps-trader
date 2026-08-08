@@ -72,13 +72,17 @@ bun run typecheck
 bun test
 bun run build
 ./dist/suwappu-perps --help
+bun audit --audit-level=high
+python -m pip install -r requirements.txt
+python -m pip install pip-audit
 python -m py_compile trader.py risk.py
 python -m unittest discover -s tests -p 'test_*.py'
+pip-audit -r requirements.txt
 docker build -t suwappu-perps .
 docker run --rm --network none suwappu-perps --help
 ```
 
-Also require green dependency audit and CodeQL checks in GitHub Actions.
+Also require both dependency audits and the SARIF-gated TypeScript/Python CodeQL checks to be green in GitHub Actions.
 
 ## Multi-replica boundary
 
