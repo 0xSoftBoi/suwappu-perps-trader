@@ -25,6 +25,7 @@ class RiskSnapshotTests(unittest.TestCase):
                     margin=40,
                     unrealized_pnl=5,
                     liquidation_price=90,
+                    funding_rate=0.000125,
                 )
             ],
         )
@@ -36,6 +37,7 @@ class RiskSnapshotTests(unittest.TestCase):
         self.assertEqual(snapshot["nearestLiquidationDistancePct"], 10)
         position = snapshot["positions"][0]
         self.assertEqual(position["pnlOnMarginPct"], 12.5)
+        self.assertEqual(position["fundingRate"], 0.000125)
         self.assertEqual(position["leverageUtilizationPct"], 25)
         self.assertIn("within 12% threshold", position["warnings"][0])
 

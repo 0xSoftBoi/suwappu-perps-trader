@@ -1,124 +1,186 @@
 # Build a Perps Risk Product on Suwappu
 
-This repository is most valuable as a starting point for a monitoring product, not as an unfinished trading bot. The current Suwappu perps Agent API is read/quote only, which gives you a useful least-authority boundary for customer-facing research and alerts.
+The defensible product here is not “a bot that makes money.” It is reliable monitoring: convert read-only position evidence into an alert a customer can trust, route it to the right person, preserve why it fired, and prove delivery.
 
-## Start with one sellable outcome
+Version 2 ships the first meaningful slice of that product as `watch`.
 
-The strongest first outcome is simple: “tell me when one of the wallets I monitor needs attention.”
+## Start with one paid outcome
 
-The `risk` command already turns raw positions into the basic facts a product needs:
+Use a narrow promise:
 
-- open-position count;
-- absolute notional and margin;
-- unrealized P&L;
-- directional distance from the reported mark to the reported liquidation price;
-- leverage utilization against returned market metadata;
-- explicit warnings when a metric cannot be computed safely.
+> Tell me when a monitored position crosses my configured liquidation-distance rule, without repeating the same alert every poll.
 
-Do not sell the derived numbers as a prediction of liquidation. Sell the workflow: monitoring, routing, history, collaboration, and reliable notification.
+That outcome is observable. It does not claim to predict liquidation or customer profit.
+
+Activation should therefore be measured as:
+
+```text
+real wallet read → saved rule → evidence-bearing watch evaluation → delivered transition
+```
+
+Repository stars, raw API calls, and customer trading P&L are not substitutes for that funnel.
+
+## What the standalone monitor already provides
+
+`watch` persists a rule-specific state for each `(wallet, market, side, warning threshold, recovery threshold)` and emits:
+
+- `warning` once when the returned liquidation distance enters the configured risk region;
+- `recovered` once after the distance crosses the configured hysteresis boundary;
+- `insufficient_data` without changing prior state when liquidation evidence is unavailable;
+- `not_returned` when a previously observed position disappears from a successful position read, without pretending that absence proves recovery;
+- `unchanged` on ordinary polls, with `shouldNotify: false`.
+
+This solves transition dedupe on one node. Delivery, acknowledgement, reminders, and multi-tenant storage are deliberately separate concerns.
 
 ## Product ladder
 
-| Stage | Customer value | What you add |
-|---|---|---|
-| Explorer | “What is open right now?” | markets, positions, JSON export |
-| Alerts | “Tell me when risk changes.” | thresholds, dedupe, hysteresis, email/webhook delivery |
-| Workspace | “Monitor our wallets together.” | wallet ownership, teams, history, notes, incident state |
-| API | “Feed this into our systems.” | stable snapshot schema, API keys, quotas, webhooks, delivery logs |
-| Execution handoff | “Let an approved operator act.” | a separate integration and explicit authority boundary |
+| Stage | Customer outcome | Product work | Sensible meter |
+|---|---|---|---|
+| Explorer | “Show me risk now.” | market/position/risk reads | Free/onboarding |
+| Alerts | “Tell me when a rule changes.” | durable watch + email/webhook/pager | monitored wallets or active rules |
+| Workspace | “Let our team operate this.” | tenants, notes, ack/snooze, history | seats + wallets |
+| API | “Feed risk into our systems.” | stable API, webhooks, quotas, exports, delivery logs | usage + platform fee |
+| Enterprise | “Run this under controls.” | SSO/RBAC, audit, HA, backups, SLO, retention | contract |
+| Execution handoff | “Let an approved operator act.” | separate connector, approval, reconciliation | separate product/authority |
 
-Charge for the product value you actually operate: monitored wallets, alerting, history, collaboration, exports, API access, or service guarantees. Do not present customer trading P&L as your product revenue.
+Charge for capabilities you actually operate. Never market user trading returns as your product revenue.
 
-## Alert state is the product
+## Polling economics
 
-A cron job that sends the same warning every minute is a demo. A paid alerting product needs durable state.
-
-For every `(customer, wallet, position, rule_version)` keep at least:
-
-- last observed risk state;
-- first-triggered and last-observed timestamps;
-- last notification timestamp and delivery result;
-- acknowledgement/snooze state;
-- the threshold/rule version that produced the alert.
-
-Use hysteresis so normal price noise does not flap alerts. For example, a customer might configure a trigger at a 10% reported liquidation buffer and a recovery threshold at 12%. Those numbers are an example of state-machine behavior, not a recommended risk policy.
-
-Notify on transitions (`healthy → warning`, `warning → recovered`), not on every poll. Add a separate reminder cadence only when the customer asks for it.
-
-## Polling and request economics
-
-The standalone `risk` command performs two Suwappu reads for one wallet: `perps.positions(address)` and `perps.markets()`.
-
-In a service, share market metadata across wallets within the same poll cycle. With 100 wallets polled once per minute:
-
-- naive per-wallet composition: `100 × 2 × 1,440 = 288,000` API reads/day;
-- one shared markets read per cycle: `(100 + 1) × 1,440 = 145,440` API reads/day.
-
-Those are request counts, not a claim about Suwappu billing. Convert them into money only with your actual current unit costs and tier terms.
-
-Model the business separately from customer trading performance:
+One standalone risk/watch evaluation currently performs:
 
 ```text
-monthly product revenue
-  = paid seats × realized subscription revenue per seat
-
-monthly variable cost
-  = Suwappu/API usage + notification delivery + storage + variable compute
-
-contribution margin
-  = monthly product revenue - monthly variable cost
-
-break-even seats
-  = monthly fixed operating cost / contribution margin per seat
+1 × positions(address) + 1 × markets
 ```
 
-Track failed deliveries, support time, refunds, and data-retention cost too. “Our users made money” is not a substitute for product gross margin.
+A multi-wallet service should share the market read within a poll cycle. At 100 wallets and one evaluation per minute:
 
-## Snapshot semantics
+```text
+naive      = 100 × 2 × 1,440 = 288,000 HTTP reads/day
+shared     = (100 + 1) × 1,440 = 145,440 HTTP reads/day
+saved      = 142,560 reads/day
+```
 
-Treat the risk object as a derived observation:
+Those are request counts, **not** a claim about current Suwappu billing. Convert them to dollars only with the pricing and unit costs that actually apply to your account.
 
-- `computedAt` is local client time;
-- positions and markets are independent reads, so the combined object is not atomic;
-- `liquidationPrice: 0` means unavailable on the current Suwappu path;
-- `fundingRate` is currently a placeholder zero and must not drive funding alerts;
-- quote entry/liquidation values are indicative and do not model order-book slippage or a guaranteed fill.
+For a paid service, model contribution separately from customer trading:
 
-Persist the raw inputs alongside derived alert facts when you need an audit trail. That makes later rule changes explainable.
+```text
+monthly realized revenue
+  = subscription + usage revenue - discounts - refunds
 
-## Ownership and privacy
+monthly variable cost
+  = Suwappu/API usage
+  + notification delivery
+  + storage/retention
+  + variable compute/egress
+  + variable support burden
 
-A wallet address may be public on-chain, but a customer's watchlist and alert history are still customer data. In a multi-tenant product:
+contribution margin
+  = monthly realized revenue - monthly variable cost
 
-- scope watchlists and alert state to the authenticated tenant;
-- never use a user-supplied tenant ID as the authorization decision by itself;
-- rate-limit bulk watchlist imports and polling;
-- avoid logging API keys or full webhook secrets;
-- keep delivery endpoints tenant-scoped and verify webhook ownership.
+contribution margin per monitored wallet
+  = contribution margin / average paid monitored wallets
+```
 
-## Execution is a different authority class
+Do not call gross receipts “profit,” and do not infer willingness to pay from alert volume alone.
 
-The current example does not execute perps trades. Keep it that way unless you intentionally build a separate connector.
+## Delivery is a second state machine
 
-If you later add execution through Hyperliquid or another venue, require a new approval boundary and durable intent record. A network timeout on a money-moving request is ambiguous; reconcile venue state before retrying. Never turn a read-only alert acknowledgement into implicit trade approval.
+The CLI tells you **what changed**. A paid service still needs to guarantee what happened to the notification.
 
-## When to use Hyperliquid directly
+For every emitted transition, persist a durable event ID and delivery state such as:
 
-Hyperliquid's official [API docs](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api) and [Python SDK](https://github.com/hyperliquid-dex/hyperliquid-python-sdk) expose much more venue-native capability than this repository, including trading flows. Hyperliquid's docs also recommend its [WebSocket API](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/websocket) for realtime data.
+```text
+pending → attempting → delivered
+                    ↘ retryable_failure
+                    ↘ terminal_failure
+```
 
-Use those direct surfaces when your product needs low-latency streaming, full venue metadata, signing, or execution. The advantage of Suwappu here is different: a smaller, agent-friendly read/quote boundary with hosted MCP and consistent application-facing primitives.
+Use an outbox/queue so a process crash between saving risk state and sending a webhook cannot silently lose a transition. Give downstream webhooks an idempotency/event key so retries do not become duplicate pages.
 
-That boundary is a feature only if the product makes it explicit.
+Acknowledgement and snooze belong to this delivery/workflow layer—not to the raw risk calculation.
 
-## What to measure after launch
+## Snapshot and evidence semantics
 
-Avoid vanity metrics such as repository stars alone. Measure the funnel that predicts a useful product:
+Store enough evidence to explain an alert later:
 
-1. developer reaches a successful `markets` or `risk` response;
-2. developer saves a real wallet to monitor;
-3. at least one alert rule is created;
-4. a notification is delivered and acknowledged;
-5. the customer is still monitoring wallets in later weeks;
-6. paid product revenue exceeds the variable cost of serving those customers.
+- source wallet, market, and side;
+- raw returned mark and liquidation prices;
+- derived distance and threshold version;
+- local observation/computation time;
+- API/provider contract version when your service has one;
+- decision state and durable event ID.
 
-For the open-source example itself, optimize time-to-first-success, copy/paste accuracy, failure clarity, and the percentage of builders who move from a raw read to a durable product workflow.
+Remember the boundaries:
+
+- market and position values are independent reads, not an atomic exchange snapshot;
+- `liquidationPrice: 0` is unavailable, not a valid zero-dollar liquidation price;
+- reported liquidation is monitoring evidence, not a liquidation guarantee;
+- `fundingRate` is current market context, not accrued funding P&L;
+- quote entry/liquidation/fee values are indicative and do not guarantee a fill.
+
+## Multi-tenant graduation
+
+The local JSON state is deliberately single-node. Before selling a multi-replica enterprise service, replace it with a transactional store whose primary key includes tenant ownership.
+
+Minimum control plane:
+
+- tenant-scoped watchlists, rule state, delivery endpoints, and history;
+- database authorization that does not trust a caller-supplied tenant ID by itself;
+- encryption in transit and at rest according to your operating requirements;
+- secret-manager-backed Suwappu/webhook credentials with rotation;
+- SSO/RBAC for team access and privileged changes;
+- immutable/auditable rule and destination changes;
+- transactional alert outbox and idempotent delivery workers;
+- backups plus a tested restore procedure;
+- documented retention/deletion policy;
+- service health, queue-age, failed-delivery, stale-data, and provider-rate-limit metrics;
+- defined SLOs only after you have measured the system you can actually operate.
+
+Do not advertise an uptime or response-time SLA merely because the repository has health checks.
+
+## Privacy and abuse resistance
+
+A wallet address can be public while a customer's watchlist, thresholds, alert history, team membership, and webhook endpoints are private customer data.
+
+At minimum:
+
+- isolate every record by authenticated tenant;
+- avoid API keys, bearer tokens, webhook secrets, full request bodies, and exception dumps in logs;
+- rate-limit bulk watchlist imports and expensive polling patterns;
+- validate webhook destinations to reduce SSRF risk;
+- sign outbound webhooks and rotate signing secrets;
+- cap retention rather than accumulating risk history forever by default.
+
+The standalone CLI's `SUWAPPU_API_EVENTS=1` mode is intentionally metadata-only for this reason.
+
+## When to move closer to Hyperliquid
+
+Suwappu gives the product a small read/quote authority surface plus REST/SDK/MCP interfaces. Hyperliquid's direct surface is broader.
+
+Use Hyperliquid's documented [WebSocket subscriptions](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/websocket/subscriptions) when a polling product can no longer meet your latency/cost target. Review the venue's current [rate and user limits](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/rate-limits-and-user-limits) as part of capacity planning.
+
+If you need signing/execution, use the venue's official [Python SDK](https://github.com/hyperliquid-dex/hyperliquid-python-sdk) or another explicitly reviewed execution connector—but put it behind a new authority boundary.
+
+Execution should require a durable intent, explicit approval/policy decision, idempotency strategy, and post-timeout reconciliation. A read-only alert acknowledgement must never become implicit permission to trade.
+
+## Enterprise readiness checklist
+
+The repository is a strong standalone primitive when all of these stay true:
+
+- [x] no execution/signing authority;
+- [x] bounded read retries/timeouts and no blind quote retry;
+- [x] schema checks on Suwappu responses;
+- [x] transition dedupe + hysteresis;
+- [x] corrupt-state fail-closed behavior and exclusive local ownership;
+- [x] non-root container and zero-network default startup;
+- [x] reproducible dependency install, tests, audit, and CodeQL;
+- [x] metadata-only optional telemetry;
+- [ ] transactional multi-tenant state;
+- [ ] durable delivery outbox and replay;
+- [ ] SSO/RBAC and tenant audit log;
+- [ ] backup/restore drills and measured SLOs;
+- [ ] documented incident/on-call process for the deployed service.
+
+The unchecked items are not “TODOs hidden in a demo.” They are the line between this standalone product primitive and a shared enterprise SaaS control plane.

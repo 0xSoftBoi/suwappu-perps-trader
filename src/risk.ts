@@ -14,6 +14,7 @@ export interface PerpsPositionView {
   margin: number;
   unrealizedPnl: number;
   liquidationPrice: number;
+  fundingRate?: number;
 }
 
 export interface PositionRisk {
@@ -27,6 +28,7 @@ export interface PositionRisk {
   notionalUsd: number;
   marginUsd: number;
   unrealizedPnlUsd: number;
+  fundingRate: number | null;
   pnlOnMarginPct: number | null;
   liquidationDistancePct: number | null;
   leverageUtilizationPct: number | null;
@@ -123,6 +125,10 @@ export function buildPositionRisk(
     notionalUsd: round(notionalUsd),
     marginUsd: round(position.margin),
     unrealizedPnlUsd: round(position.unrealizedPnl),
+    fundingRate:
+      position.fundingRate === undefined || !Number.isFinite(position.fundingRate)
+        ? null
+        : round(position.fundingRate),
     pnlOnMarginPct: pnlOnMarginPct === null ? null : round(pnlOnMarginPct),
     liquidationDistancePct:
       liquidationDistancePct === null ? null : round(liquidationDistancePct),

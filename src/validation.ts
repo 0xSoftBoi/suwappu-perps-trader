@@ -43,6 +43,9 @@ export function validatePerpsQuote(options: {
 }
 
 export function validateAddress(address: string): string {
+  if (address !== address.trim()) {
+    throw new Error("HyperLiquid address must not contain leading or trailing whitespace");
+  }
   if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
     throw new Error("HyperLiquid address must be a 0x-prefixed 20-byte address");
   }

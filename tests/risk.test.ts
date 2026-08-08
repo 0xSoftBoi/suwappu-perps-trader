@@ -22,6 +22,7 @@ describe("perps risk snapshot", () => {
           margin: 40,
           unrealizedPnl: 5,
           liquidationPrice: 90,
+          fundingRate: 0.000125,
         },
       ],
     });
@@ -33,6 +34,7 @@ describe("perps risk snapshot", () => {
     });
     expect(snapshot.nearestLiquidationDistancePct).toBe(10);
     expect(snapshot.positions[0]?.pnlOnMarginPct).toBe(12.5);
+    expect(snapshot.positions[0]?.fundingRate).toBe(0.000125);
     expect(snapshot.positions[0]?.leverageUtilizationPct).toBe(25);
     expect(snapshot.positions[0]?.warnings[0]).toContain("within 12% threshold");
   });

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only Suwappu perps market, quote, position, and risk explorer."""
+"""Minimal Python SDK companion for the standalone Suwappu perps risk monitor."""
 from __future__ import annotations
 
 import argparse
@@ -21,7 +21,18 @@ def require_api_key() -> str:
     value = os.environ.get("SUWAPPU_API_KEY")
     if not value:
         raise RuntimeError("SUWAPPU_API_KEY is not set")
+    if value != value.strip():
+        raise RuntimeError("SUWAPPU_API_KEY must not contain leading or trailing whitespace")
     return value
+
+
+def safe_error_message(error: Exception) -> str:
+    status = getattr(error, "status", None)
+    if isinstance(status, int):
+        return f"Suwappu API request failed with HTTP {status}"
+    if isinstance(error, (ValueError, RuntimeError)):
+        return str(error)
+    return type(error).__name__
 
 
 def resolve_address(value: str | None) -> str:
@@ -162,6 +173,7 @@ async def cmd_risk(args: argparse.Namespace) -> None:
                     margin=position.margin,
                     unrealized_pnl=position.unrealized_pnl,
                     liquidation_price=position.liquidation_price,
+                    funding_rate=position.funding_rate,
                 )
                 for position in positions
             ],
@@ -198,7 +210,7 @@ async def cmd_risk(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Read-only Suwappu perps explorer"
+        description="Read-only Suwappu perps SDK companion"
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -238,7 +250,7 @@ def main() -> None:
     try:
         asyncio.run(fn(args))
     except Exception as error:
-        print(f"Error: {error}", file=sys.stderr)
+        print(f"Error: {safe_error_message(error)}", file=sys.stderr)
         raise SystemExit(1) from error
 
 

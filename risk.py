@@ -19,6 +19,7 @@ class PositionInput:
     margin: float
     unrealized_pnl: float
     liquidation_price: float
+    funding_rate: float | None = None
 
 
 def _rounded(value: float, digits: int = 6) -> float:
@@ -99,6 +100,11 @@ def build_position_risk(
         "notionalUsd": _rounded(notional_usd),
         "marginUsd": _rounded(position.margin),
         "unrealizedPnlUsd": _rounded(position.unrealized_pnl),
+        "fundingRate": (
+            None
+            if position.funding_rate is None or not math.isfinite(position.funding_rate)
+            else _rounded(position.funding_rate)
+        ),
         "pnlOnMarginPct": (
             None if pnl_on_margin_pct is None else _rounded(pnl_on_margin_pct)
         ),
