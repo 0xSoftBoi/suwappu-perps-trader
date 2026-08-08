@@ -185,6 +185,7 @@ async function getJson(
   path: string,
   params: Record<string, string | undefined> = {},
   authenticated = false,
+  parse: (value: unknown) => unknown = (value) => value,
 ): Promise<unknown> {
   const config = loadRuntimeConfig();
   const search = new URLSearchParams();
@@ -230,14 +231,25 @@ async function getJson(
       );
     }
 
-    const payload = await responseJson(response, operation);
-    emitApiEvent(config, operation, "ok", attempt, startedAt, response.status);
-    return payload;
+    try {
+      const payload = await responseJson(response, operation);
+      const parsed = parse(payload);
+      emitApiEvent(config, operation, "ok", attempt, startedAt, response.status);
+      return parsed;
+    } catch (error) {
+      emitApiEvent(config, operation, "error", attempt, startedAt, response.status);
+      throw error;
+    }
   }
   throw new SuwappuPerpsError(`Suwappu API ${operation} request failed`, null);
 }
 
-async function postJson(operation: string, path: string, body: unknown): Promise<unknown> {
+async function postJson(
+  operation: string,
+  path: string,
+  body: unknown,
+  parse: (value: unknown) => unknown = (value) => value,
+): Promise<unknown> {
   const config = loadRuntimeConfig();
   const key = requireApiKey(config);
   const startedAt = Date.now();
@@ -263,9 +275,15 @@ async function postJson(operation: string, path: string, body: unknown): Promise
       response.status,
     );
   }
-  const payload = await responseJson(response, operation);
-  emitApiEvent(config, operation, "ok", 1, startedAt, response.status);
-  return payload;
+  try {
+    const payload = await responseJson(response, operation);
+    const parsed = parse(payload);
+    emitApiEvent(config, operation, "ok", 1, startedAt, response.status);
+    return parsed;
+  } catch (error) {
+    emitApiEvent(config, operation, "error", 1, startedAt, response.status);
+    throw error;
+  }
 }
 
 /**
@@ -273,22 +291,27 @@ async function postJson(operation: string, path: string, body: unknown): Promise
  * intentionally one-shot because the hosted MCP contract marks it non-idempotent.
  */
 export const perpsApi = {
-  markets: async (): Promise<PerpsMarket[]> => {
-    const root = record(await getJson("perps.markets", "/v1/agent/perps/markets"), "markets");
-    return arrayField(root, "markets", "markets").map(parseMarket);
-  },
-  positions: async (address: string): Promise<PerpsPosition[]> => {
-    const root = record(
-      await getJson("perps.positions", "/v1/agent/perps/positions", { address }, true),
-      "positions",
-    );
-    return arrayField(root, "positions", "positions").map(parsePosition);
-  },
+  markets: async (): Promise<PerpsMarket[]> =>
+    (await getJson("perps.markets", "/v1/agent/perps/markets", {}, false, (value) => {
+      const root = record(value, "markets");
+      return arrayField(root, "markets", "markets").map(parseMarket);
+    })) as PerpsMarket[],
+  positions: async (address: string): Promise<PerpsPosition[]> =>
+    (await getJson(
+      "perps.positions",
+      "/v1/agent/perps/positions",
+      { address },
+      true,
+      (value) => {
+        const root = record(value, "positions");
+        return arrayField(root, "positions", "positions").map(parsePosition);
+      },
+    )) as PerpsPosition[],
   quote: async (args: {
     market: string;
     side: "long" | "short";
     size: number;
     leverage: number;
   }): Promise<PerpsQuote> =>
-    parseQuote(await postJson("perps.quote", "/v1/agent/perps/quote", args)),
+    (await postJson("perps.quote", "/v1/agent/perps/quote", args, parseQuote)) as PerpsQuote,
 };

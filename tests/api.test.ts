@@ -4,6 +4,8 @@ import { perpsApi } from "../src/api.js";
 const originalFetch = globalThis.fetch;
 const originalKey = process.env.SUWAPPU_API_KEY;
 const originalRetries = process.env.SUWAPPU_READ_RETRIES;
+const originalApiEvents = process.env.SUWAPPU_API_EVENTS;
+const originalConsoleError = console.error;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -11,6 +13,9 @@ afterEach(() => {
   else process.env.SUWAPPU_API_KEY = originalKey;
   if (originalRetries === undefined) delete process.env.SUWAPPU_READ_RETRIES;
   else process.env.SUWAPPU_READ_RETRIES = originalRetries;
+  if (originalApiEvents === undefined) delete process.env.SUWAPPU_API_EVENTS;
+  else process.env.SUWAPPU_API_EVENTS = originalApiEvents;
+  console.error = originalConsoleError;
 });
 
 function json(value: unknown, status = 200, headers: Record<string, string> = {}): Response {
@@ -93,5 +98,27 @@ describe("Suwappu perps REST client", () => {
     }
     expect(message).toContain("HTTP 500");
     expect(message).not.toContain("do-not-log");
+  });
+
+  it("emits error telemetry, never ok, for invalid JSON and invalid schemas", async () => {
+    process.env.SUWAPPU_READ_RETRIES = "0";
+    process.env.SUWAPPU_API_EVENTS = "1";
+    const events: string[] = [];
+    console.error = (...args: unknown[]) => {
+      events.push(args.map(String).join(" "));
+    };
+
+    globalThis.fetch = (async () =>
+      new Response("{not-json", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch;
+    await expect(perpsApi.markets()).rejects.toThrow("invalid JSON");
+    expect(events.map((event) => JSON.parse(event).outcome)).toEqual(["error"]);
+
+    events.length = 0;
+    globalThis.fetch = (async () => json({ markets: [{}] })) as unknown as typeof fetch;
+    await expect(perpsApi.markets()).rejects.toThrow("invalid market response");
+    expect(events.map((event) => JSON.parse(event).outcome)).toEqual(["error"]);
   });
 });

@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { acquireStateLock, loadWatchState, saveWatchState, type WatchState } from "../src/state.js";
@@ -48,6 +56,14 @@ describe("watch state persistence", () => {
     expect(() => loadWatchState()).toThrow("regular file");
   });
 
+  it("refuses a dangling symlinked state file instead of treating it as fresh state", () => {
+    const directory = stateDir();
+    saveWatchState({ version: 1, watches: {} });
+    rmSync(join(directory, "watch-state.json"));
+    symlinkSync(join(temporary!, "missing-target.json"), join(directory, "watch-state.json"));
+    expect(() => loadWatchState()).toThrow("regular file");
+  });
+
   it("does not steal an existing lock and releases only its own lock", () => {
     const directory = stateDir();
     const first = acquireStateLock();
@@ -56,5 +72,16 @@ describe("watch state persistence", () => {
     first.release();
     const second = acquireStateLock();
     second.release();
+  });
+
+  it("does not release a replacement lock even if its contents copy the owner token", () => {
+    const directory = stateDir();
+    const lock = acquireStateLock();
+    const path = join(directory, "watch.lock");
+    const token = readFileSync(path, "utf8");
+    rmSync(path);
+    writeFileSync(path, token, { encoding: "utf8", mode: 0o600 });
+    lock.release();
+    expect(existsSync(path)).toBe(true);
   });
 });

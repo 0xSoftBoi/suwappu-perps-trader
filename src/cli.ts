@@ -58,7 +58,7 @@ const program = new Command()
 program
   .command("markets")
   .description("List supported perpetual markets; no API key required")
-  .option("--top <n>", "show top N markets", Number.parseInt, 10)
+  .option("--top <n>", "show top N markets", Number, 10)
   .option("--json", "JSON output")
   .action(async (opts) => {
     const topN = positiveInteger(opts.top, "--top");
@@ -84,8 +84,8 @@ program
   .description("Get an indicative read-only position quote; never opens a position")
   .option("--market <name>", "market symbol", "ETH-USD")
   .option("--side <side>", "long or short", "long")
-  .option("--size <n>", "position size in base-asset units", Number.parseFloat, 1)
-  .option("--leverage <n>", "leverage multiplier", Number.parseFloat, 5)
+  .option("--size <n>", "position size in base-asset units", Number, 1)
+  .option("--leverage <n>", "leverage multiplier", Number, 5)
   .option("--json", "JSON output")
   .action(async (opts) => {
     const markets = await perpsApi.markets();
@@ -156,7 +156,7 @@ program
   .option(
     "--warn-within <pct>",
     "flag a reported liquidation buffer at or below this percentage",
-    Number.parseFloat,
+    Number,
     10,
   )
   .option("--json", "JSON output")
@@ -175,13 +175,13 @@ program
   .option(
     "--warn-within <pct>",
     "enter warning state at or below this reported liquidation-buffer percentage",
-    Number.parseFloat,
+    Number,
     10,
   )
   .option(
     "--hysteresis <pct>",
     "percentage points above the warning threshold required to recover",
-    Number.parseFloat,
+    Number,
     2,
   )
   .option("--json", "JSON output")

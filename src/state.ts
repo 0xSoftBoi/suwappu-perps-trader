@@ -3,6 +3,7 @@ import {
   chmodSync,
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
@@ -74,8 +75,15 @@ function validEntry(value: unknown): value is WatchStateEntry {
 
 export function loadWatchState(): WatchState {
   const path = statePath();
-  if (!existsSync(path)) return { version: 1, watches: {} };
-  const stat = lstatSync(path);
+  let stat;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { version: 1, watches: {} };
+    }
+    throw error;
+  }
   if (stat.isSymbolicLink() || !stat.isFile()) {
     throw new Error(`Perps watch state must be a regular file, not a symlink: ${path}`);
   }
@@ -132,6 +140,29 @@ export interface StateLock {
   release(): void;
 }
 
+interface LockIdentity {
+  dev: number;
+  ino: number;
+}
+
+function unlinkMatchingLock(path: string, identity: LockIdentity, token?: string): void {
+  try {
+    const current = lstatSync(path);
+    if (
+      current.isSymbolicLink() ||
+      !current.isFile() ||
+      current.dev !== identity.dev ||
+      current.ino !== identity.ino
+    ) {
+      return;
+    }
+    if (token !== undefined && readFileSync(path, "utf8").trim() !== token) return;
+    unlinkSync(path);
+  } catch {
+    // Never delete a lock whose file identity cannot be proven.
+  }
+}
+
 export function acquireStateLock(): StateLock {
   const directory = stateDirectory();
   ensurePrivateDirectory(directory);
@@ -148,11 +179,21 @@ export function acquireStateLock(): StateLock {
     }
     throw error;
   }
+  const identity = fstatSync(fd);
   try {
     writeFileSync(fd, `${token}\n`, "utf8");
     fsyncSync(fd);
-  } finally {
     closeSync(fd);
+  } catch (error) {
+    try {
+      closeSync(fd);
+    } catch {
+      // The descriptor may already have been closed by a failed close operation.
+    }
+    // The O_EXCL-created inode is ours even if its token write was partial.
+    // Delete only if the path still resolves to that exact inode.
+    unlinkMatchingLock(path, identity);
+    throw error;
   }
 
   let released = false;
@@ -160,11 +201,7 @@ export function acquireStateLock(): StateLock {
     release(): void {
       if (released) return;
       released = true;
-      try {
-        if (readFileSync(path, "utf8").trim() === token) unlinkSync(path);
-      } catch {
-        // Never delete a lock whose ownership cannot be proven.
-      }
+      unlinkMatchingLock(path, identity, token);
     },
   };
 }

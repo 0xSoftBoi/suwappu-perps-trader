@@ -34,9 +34,7 @@ function baseUrl(raw: string | undefined): string {
     throw new Error("SUWAPPU_API_URL must be an absolute URL");
   }
 
-  const localHttp =
-    url.protocol === "http:" &&
-    (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1");
+  const localHttp = url.protocol === "http:" && isLoopbackHostname(url.hostname);
   if (url.protocol !== "https:" && !localHttp) {
     throw new Error("SUWAPPU_API_URL must use HTTPS (HTTP is allowed only for localhost)");
   }
@@ -44,6 +42,13 @@ function baseUrl(raw: string | undefined): string {
     throw new Error("SUWAPPU_API_URL must not contain credentials, query parameters, or a fragment");
   }
   return url.toString().replace(/\/$/, "");
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1)
+    : hostname;
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1";
 }
 
 function apiKey(raw: string | undefined): string | null {
@@ -79,10 +84,7 @@ export function requireApiKey(config: RuntimeConfig): string {
   }
   const url = new URL(config.apiBaseUrl);
   const trustedOrigin =
-    url.origin === "https://api.suwappu.bot" ||
-    url.hostname === "localhost" ||
-    url.hostname === "127.0.0.1" ||
-    url.hostname === "::1";
+    url.origin === "https://api.suwappu.bot" || isLoopbackHostname(url.hostname);
   if (!trustedOrigin && !config.allowCustomAuthOrigin) {
     throw new Error(
       "Refusing to send SUWAPPU_API_KEY to a custom origin; set SUWAPPU_ALLOW_CUSTOM_AUTH_ORIGIN=1 only after verifying that endpoint",

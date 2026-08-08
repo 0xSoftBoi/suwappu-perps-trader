@@ -64,6 +64,55 @@ describe("durable perps watch", () => {
     expect(repeated.decisions[0]?.shouldNotify).toBe(false);
   });
 
+  it("re-arms a missing alert after the position is observed with unavailable risk evidence", () => {
+    const key = watchKey(rule, "ETH-USD", "long");
+    const active = evaluatePosition(
+      position(8),
+      rule,
+      undefined,
+      new Date("2026-08-07T12:00:00Z"),
+    ).nextEntry!;
+    const firstMissing = evaluateWatch(
+      [],
+      rule,
+      { version: 1, watches: { [key]: active } },
+      new Date("2026-08-07T12:01:00Z"),
+    );
+
+    const observedUnknown = evaluateWatch(
+      [position(null)],
+      rule,
+      firstMissing.nextState,
+      new Date("2026-08-07T12:02:00Z"),
+    );
+    expect(observedUnknown.decisions[0]?.state).toBe("insufficient_data");
+    expect(observedUnknown.nextState.watches[key]?.active).toBe(true);
+    expect(observedUnknown.nextState.watches[key]?.missing).toBe(false);
+    expect(observedUnknown.nextState.watches[key]?.missingSince).toBeNull();
+
+    const missingAgain = evaluateWatch(
+      [],
+      rule,
+      observedUnknown.nextState,
+      new Date("2026-08-07T12:03:00Z"),
+    );
+    expect(missingAgain.decisions[0]?.state).toBe("not_returned");
+    expect(missingAgain.decisions[0]?.shouldNotify).toBe(true);
+  });
+
+  it("normalizes decimal recovery boundaries to risk-distance precision", () => {
+    const decimalRule = {
+      address,
+      warnWithinPct: 0.1,
+      recoverAbovePct: 0.1 + 0.2,
+    };
+    expect(validateWatchRule(decimalRule).recoverAbovePct).toBe(0.3);
+    const active = evaluatePosition(position(0.05), decimalRule, undefined).nextEntry!;
+    const recovered = evaluatePosition(position(0.3), decimalRule, active);
+    expect(recovered.decision.state).toBe("recovered");
+    expect(recovered.decision.shouldNotify).toBe(true);
+  });
+
   it("keys rules by wallet/market/side and thresholds, not the unstable upstream id", () => {
     expect(watchKey(rule, "ETH-USD", "long")).toBe(watchKey(rule, "ETH-USD", "long"));
     expect(watchKey(rule, "ETH-USD", "long")).not.toBe(watchKey(rule, "ETH-USD", "short"));

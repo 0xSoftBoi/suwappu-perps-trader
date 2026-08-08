@@ -26,6 +26,15 @@ describe("runtime configuration", () => {
     expect(requireApiKey(config)).toBe(key);
   });
 
+  it("treats bracketed IPv6 loopback as a local development origin", () => {
+    const config = loadRuntimeConfig({
+      SUWAPPU_API_KEY: key,
+      SUWAPPU_API_URL: "http://[::1]:8787",
+    });
+    expect(config.apiBaseUrl).toBe("http://[::1]:8787");
+    expect(requireApiKey(config)).toBe(key);
+  });
+
   it("rejects credential-bearing and insecure remote API URLs", () => {
     expect(() => loadRuntimeConfig({ SUWAPPU_API_URL: "http://example.com" })).toThrow("HTTPS");
     expect(() => loadRuntimeConfig({ SUWAPPU_API_URL: "https://user@example.com" })).toThrow(

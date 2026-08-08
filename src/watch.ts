@@ -18,6 +18,11 @@ export interface WatchDecision {
   liquidationDistancePct: number | null;
 }
 
+function normalizePercentage(value: number): number {
+  const scale = 1_000_000;
+  return Math.round((value + Number.EPSILON) * scale) / scale;
+}
+
 export function validateWatchRule(rule: WatchRule): WatchRule {
   if (!Number.isFinite(rule.warnWithinPct) || rule.warnWithinPct <= 0) {
     throw new Error("--warn-within must be a positive percentage");
@@ -25,16 +30,25 @@ export function validateWatchRule(rule: WatchRule): WatchRule {
   if (!Number.isFinite(rule.recoverAbovePct) || rule.recoverAbovePct <= rule.warnWithinPct) {
     throw new Error("recovery threshold must be greater than --warn-within");
   }
-  return rule;
+  const normalized = {
+    ...rule,
+    warnWithinPct: normalizePercentage(rule.warnWithinPct),
+    recoverAbovePct: normalizePercentage(rule.recoverAbovePct),
+  };
+  if (normalized.recoverAbovePct <= normalized.warnWithinPct) {
+    throw new Error("recovery threshold must be greater than --warn-within at 6-decimal precision");
+  }
+  return normalized;
 }
 
 export function watchKey(rule: WatchRule, market: string, side: "long" | "short"): string {
+  const normalized = validateWatchRule(rule);
   const identity = JSON.stringify({
-    address: rule.address.toLowerCase(),
+    address: normalized.address.toLowerCase(),
     market,
     side,
-    warnWithinPct: rule.warnWithinPct,
-    recoverAbovePct: rule.recoverAbovePct,
+    warnWithinPct: normalized.warnWithinPct,
+    recoverAbovePct: normalized.recoverAbovePct,
   });
   return createHash("sha256").update(identity).digest("hex");
 }
@@ -67,8 +81,8 @@ export function evaluatePosition(
   previous: WatchStateEntry | undefined,
   now = new Date(),
 ): { decision: WatchDecision; nextEntry: WatchStateEntry | null } {
-  validateWatchRule(rule);
-  const key = watchKey(rule, position.market, position.side);
+  const normalizedRule = validateWatchRule(rule);
+  const key = watchKey(normalizedRule, position.market, position.side);
   const observedAt = now.toISOString();
   const distance = position.liquidationDistancePct;
   if (distance === null || !Number.isFinite(distance)) {
@@ -82,15 +96,31 @@ export function evaluatePosition(
         reason: "reported liquidation distance is unavailable; prior alert state is preserved",
         liquidationDistancePct: null,
       },
-      nextEntry: null,
+      nextEntry: previous
+        ? {
+            ...previous,
+            missing: false,
+            lastObservedAt: observedAt,
+            missingSince: null,
+          }
+        : null,
     };
   }
 
   const wasActive = previous?.active ?? false;
-  const active = wasActive ? distance < rule.recoverAbovePct : distance <= rule.warnWithinPct;
+  const active = wasActive
+    ? distance < normalizedRule.recoverAbovePct
+    : distance <= normalizedRule.warnWithinPct;
   const activated = active && !wasActive;
   const recovered = !active && wasActive;
-  const nextEntry = entryFor(rule, position, active, previous, observedAt, activated || recovered);
+  const nextEntry = entryFor(
+    normalizedRule,
+    position,
+    active,
+    previous,
+    observedAt,
+    activated || recovered,
+  );
 
   if (activated) {
     return {
@@ -100,7 +130,7 @@ export function evaluatePosition(
         side: position.side,
         state: "warning",
         shouldNotify: true,
-        reason: `liquidation distance crossed at or below ${rule.warnWithinPct}%`,
+        reason: `liquidation distance crossed at or below ${normalizedRule.warnWithinPct}%`,
         liquidationDistancePct: distance,
       },
       nextEntry,
@@ -114,7 +144,7 @@ export function evaluatePosition(
         side: position.side,
         state: "recovered",
         shouldNotify: true,
-        reason: `liquidation distance reached the ${rule.recoverAbovePct}% recovery boundary`,
+        reason: `liquidation distance reached the ${normalizedRule.recoverAbovePct}% recovery boundary`,
         liquidationDistancePct: distance,
       },
       nextEntry,
